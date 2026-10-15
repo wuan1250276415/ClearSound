@@ -4,6 +4,7 @@ import type {
   Folder,
   LyricHit,
   Lyrics,
+  OutputDevice,
   PlaybackState,
   Playlist,
   PlaylistEntry,
@@ -30,8 +31,15 @@ const emptyPlayback = (): PlaybackState => ({
   current: null,
   queue: [],
   error: null,
-  warning: inTauri() ? null : null,
+  warning: null,
+  outputLabel: "WASAPI 共享 · 48kHz/32bit float",
 });
+
+const browserDevices: OutputDevice[] = [
+  { id: "", name: "系统默认" },
+  { id: "speakers", name: "扬声器" },
+  { id: "usb-dac", name: "USB DAC" },
+];
 
 export interface Snapshot {
   ready: boolean;
@@ -51,6 +59,7 @@ export interface Snapshot {
   playback: PlaybackState;
   art: Record<number, string | null>;
   settings: Settings;
+  outputDevices: OutputDevice[];
 }
 
 let snapshot: Snapshot = {
@@ -77,7 +86,12 @@ let snapshot: Snapshot = {
     autoOnlineLyrics: true,
     autoOnlineCover: true,
     saveLrcBesideFile: false,
+    outputDeviceId: "",
+    outputMode: "shared",
+    exclusiveVolumeLock: false,
+    dop: false,
   },
+  outputDevices: browserDevices,
 };
 
 const listeners = new Set<() => void>();
@@ -85,8 +99,40 @@ let started = false;
 let mockSeq = 1;
 
 function emit() {
+  if (!inTauri()) paintMockOutput();
   snapshot = { ...snapshot };
   listeners.forEach((listener) => listener());
+}
+
+function rateText(rate: number): string {
+  if (rate % 1000 === 0) return `${rate / 1000}kHz`;
+  if (rate % 100 === 0) return `${(rate / 1000).toFixed(1)}kHz`;
+  return `${rate}Hz`;
+}
+
+function paintMockOutput() {
+  const settings = snapshot.settings;
+  const track = snapshot.playback.current;
+  const exclusive = settings.outputMode === "exclusive";
+  let outputLabel = "WASAPI 共享 · 48kHz/32bit float";
+  if (exclusive) {
+    const dsd = track?.format === "DSF" || track?.format === "DFF";
+    if (track && settings.dop && dsd) {
+      const rate = track.sampleRate === 5_644_800 ? "352.8kHz" : "176.4kHz";
+      outputLabel = `WASAPI 独占 · ${rate}/24bit DoP`;
+    } else if (track?.sampleRate) {
+      outputLabel = `WASAPI 独占 · ${rateText(track.sampleRate)}/${track.bitDepth ?? 16}bit`;
+    } else {
+      outputLabel = "WASAPI 独占";
+    }
+  }
+  const warning =
+    exclusive && !settings.exclusiveVolumeLock && snapshot.playback.volume < 0.999
+      ? "独占模式的音量是数字音量，低于 100% 时不是位完美"
+      : null;
+  if (snapshot.playback.outputLabel !== outputLabel || snapshot.playback.warning !== warning) {
+    snapshot.playback = { ...snapshot.playback, outputLabel, warning };
+  }
 }
 
 export function subscribe(listener: () => void) {
@@ -123,6 +169,7 @@ export async function init() {
       await reloadLibrary();
       snapshot.playback = await call<PlaybackState>("playback_state");
       snapshot.settings = await call<Settings>("settings_get");
+      snapshot.outputDevices = await call<OutputDevice[]>("output_devices");
       snapshot.ready = true;
       emit();
     } catch (err) {

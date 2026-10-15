@@ -1,6 +1,6 @@
 [package]
 name = "chengyin"
-version = "0.3.0"
+version = "0.4.0"
 description = "澄音 — local music player for Windows"
 authors = ["Chengyin"]
 edition = "2024"
@@ -50,3 +50,4 @@ hound = "3.5.1"
 
 [target."cfg(windows)".dependencies]
 souvlaki = "0.8.3"
+wasapi = "0.26.0"

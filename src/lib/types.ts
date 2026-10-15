@@ -1,5 +1,12 @@
 export type RepeatMode = "off" | "all" | "one";
 
+export type OutputMode = "shared" | "exclusive";
+
+export interface OutputDevice {
+  id: string;
+  name: string;
+}
+
 export interface Track {
   id: number;
   path: string;
@@ -73,6 +80,7 @@ export interface PlaybackState {
   queue: Track[];
   error?: string | null;
   warning?: string | null;
+  outputLabel: string;
 }
 
 export interface Settings {
@@ -82,6 +90,10 @@ export interface Settings {
   autoOnlineLyrics: boolean;
   autoOnlineCover: boolean;
   saveLrcBesideFile: boolean;
+  outputDeviceId: string;
+  outputMode: OutputMode;
+  exclusiveVolumeLock: boolean;
+  dop: boolean;
 }
 
 export interface ScanProgress {

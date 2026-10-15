@@ -492,27 +492,73 @@ export default function App() {
       </div>
 
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>设置</DialogTitle>
-            <DialogDescription>在线歌词和封面只在本地没有结果时才会请求。没有网络时继续使用已有资料。</DialogDescription>
+            <DialogDescription>
+              在线歌词和封面只在本地没有结果时才会请求。没有网络时继续使用已有资料。独占输出只在 Windows 上打开 WASAPI。
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2">
-            <SettingToggle
-              label="自动获取在线歌词"
-              pressed={snap.settings.autoOnlineLyrics}
-              onClick={() => void api.setSettings({ autoOnlineLyrics: !snap.settings.autoOnlineLyrics })}
-            />
-            <SettingToggle
-              label="自动获取在线封面"
-              pressed={snap.settings.autoOnlineCover}
-              onClick={() => void api.setSettings({ autoOnlineCover: !snap.settings.autoOnlineCover })}
-            />
-            <SettingToggle
-              label="匹配后保存到歌曲旁边的 .lrc"
-              pressed={snap.settings.saveLrcBesideFile}
-              onClick={() => void api.setSettings({ saveLrcBesideFile: !snap.settings.saveLrcBesideFile })}
-            />
+          <div className="space-y-4">
+            <label className="block space-y-1 text-sm">
+              <span className="text-muted">输出设备</span>
+              <select
+                aria-label="输出设备"
+                className="w-full rounded-md border border-line bg-ink px-3 py-2"
+                value={snap.settings.outputDeviceId}
+                onChange={(event) => void api.setSettings({ outputDeviceId: event.target.value })}
+              >
+                {outputChoices(snap.outputDevices, snap.settings.outputDeviceId).map((device) => (
+                  <option key={device.id || "default"} value={device.id}>
+                    {device.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div role="radiogroup" aria-label="输出模式" className="grid grid-cols-2 gap-2">
+              <ModeChoice
+                label="共享"
+                checked={snap.settings.outputMode === "shared"}
+                onClick={() => void api.setSettings({ outputMode: "shared" })}
+              />
+              <ModeChoice
+                label="独占"
+                checked={snap.settings.outputMode === "exclusive"}
+                onClick={() => void api.setSettings({ outputMode: "exclusive" })}
+              />
+            </div>
+            <p className="text-xs text-muted">
+              独占模式会按曲目自己的采样率和位深打开设备。设备不支持时改用最接近的格式，并在播放条提示。
+            </p>
+            <div className="space-y-2">
+              <SettingToggle
+                label="独占时音量锁定为 100%"
+                pressed={snap.settings.exclusiveVolumeLock}
+                onClick={() =>
+                  void api.setSettings({ exclusiveVolumeLock: !snap.settings.exclusiveVolumeLock })
+                }
+              />
+              <SettingToggle
+                label="独占时用 DoP 输出 DSD"
+                pressed={snap.settings.dop}
+                onClick={() => void api.setSettings({ dop: !snap.settings.dop })}
+              />
+              <SettingToggle
+                label="自动获取在线歌词"
+                pressed={snap.settings.autoOnlineLyrics}
+                onClick={() => void api.setSettings({ autoOnlineLyrics: !snap.settings.autoOnlineLyrics })}
+              />
+              <SettingToggle
+                label="自动获取在线封面"
+                pressed={snap.settings.autoOnlineCover}
+                onClick={() => void api.setSettings({ autoOnlineCover: !snap.settings.autoOnlineCover })}
+              />
+              <SettingToggle
+                label="匹配后保存到歌曲旁边的 .lrc"
+                pressed={snap.settings.saveLrcBesideFile}
+                onClick={() => void api.setSettings({ saveLrcBesideFile: !snap.settings.saveLrcBesideFile })}
+              />
+            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -657,6 +703,7 @@ function PlayerBar({
   const snap = useSyncExternalStore(api.subscribe, api.getSnapshot, api.getSnapshot);
   const playback = snap.playback;
   const current = playback.current;
+  const volumeLocked = snap.settings.outputMode === "exclusive" && snap.settings.exclusiveVolumeLock;
   const duration = playback.durationMs;
   const shown = scrub ?? playback.positionMs;
 
@@ -671,6 +718,11 @@ function PlayerBar({
               {current ? `${current.artist} · ${current.album}` : "从资料库选一首开始"}
             </p>
             {current && <p className="truncate text-xs text-jade">{formatTech(current)}</p>}
+            {playback.outputLabel && (
+              <p data-testid="output-format" className="truncate text-xs text-muted">
+                {playback.outputLabel}
+              </p>
+            )}
           </div>
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -739,6 +791,7 @@ function PlayerBar({
             variant="ghost"
             size="icon"
             aria-label={playback.volume === 0 ? "取消静音" : "静音"}
+            disabled={volumeLocked}
             onClick={() => api.setVolume(playback.volume === 0 ? 0.85 : 0)}
           >
             {playback.volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
@@ -747,7 +800,8 @@ function PlayerBar({
             aria-label="音量"
             max={1}
             step={0.01}
-            value={[playback.volume]}
+            value={[volumeLocked ? 1 : playback.volume]}
+            disabled={volumeLocked}
             onValueChange={(values) => api.setVolume(values[0] ?? 0)}
           />
           <Button
@@ -764,6 +818,28 @@ function PlayerBar({
         </div>
       </div>
     </footer>
+  );
+}
+
+function outputChoices(
+  devices: { id: string; name: string }[],
+  selected: string,
+): { id: string; name: string }[] {
+  if (devices.some((device) => device.id === selected)) return devices;
+  return [...devices, { id: selected, name: "已断开的设备" }];
+}
+
+function ModeChoice({ label, checked, onClick }: { label: string; checked: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={checked}
+      className={`rounded-md border px-3 py-2 text-sm ${checked ? "border-jade bg-jade-dim text-cream" : "border-line text-muted hover:bg-panel-2"}`}
+      onClick={onClick}
+    >
+      {label}
+    </button>
   );
 }
 

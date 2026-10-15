@@ -250,6 +250,11 @@ pub fn playlist_remove_item(state: State<'_, AppState>, item_id: i64) -> Result<
 }
 
 #[tauri::command]
+pub fn output_devices() -> Vec<crate::models::OutputDevice> {
+    crate::audio::list_output_devices()
+}
+
+#[tauri::command]
 pub fn settings_get(state: State<'_, AppState>) -> Result<Settings, String> {
     let conn = state.conn.lock();
     library::load_settings(&conn)

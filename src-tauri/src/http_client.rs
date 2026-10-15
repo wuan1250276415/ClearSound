@@ -4,7 +4,7 @@
 use std::io::Read;
 use std::time::Duration;
 
-pub const USER_AGENT: &str = "Chengyin/0.3.0 (https://github.com/wuan1250276415/ClearSound)";
+pub const USER_AGENT: &str = "Chengyin/0.4.0 (https://github.com/wuan1250276415/ClearSound)";
 
 #[derive(Debug)]
 pub enum HttpBody {

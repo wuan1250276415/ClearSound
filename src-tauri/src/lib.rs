@@ -54,6 +54,7 @@ pub fn run() {
             commands::playlist_remove_item,
             commands::settings_get,
             commands::settings_set,
+            commands::output_devices,
             commands::playback_state,
             commands::playback_set_queue,
             commands::playback_toggle,

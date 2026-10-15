@@ -1,9 +1,18 @@
-//! One output stream stays open for the life of the player. Tracks that share
-//! a sample rate are appended to the same resampler, so the handoff is gapless.
-//! Seeking or skipping clears the buffer. DSD is PCM at 176.4 kHz, not DoP.
+//! Shared output keeps one stream open. Exclusive WASAPI output reopens the
+//! device when the sample rate or bit depth changes. DSD stays PCM unless DoP
+//! is enabled, in which case exclusive mode can emit 176.4 or 352.8 kHz.
 
 mod decode;
+mod devices;
+mod dop;
+mod negotiate;
 mod resample;
+mod session;
+#[cfg(windows)]
+mod wasapi_out;
+
+pub use devices::list_output_devices;
+use session::{Opened, OutputPrefs, OutputSession};
 
 use crate::models::{PlaybackState, RepeatMode, Settings, Track};
 use decode::{open_source, PcmSource};
@@ -16,8 +25,6 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 const SKIP_BUDGET: u8 = 8;
 
@@ -49,6 +56,7 @@ enum Cmd {
     Remove(usize),
     Clear,
     UpdateArt { album: String, artist: String, art_path: String },
+    Output(OutputPrefs),
 }
 
 struct Status {
@@ -59,9 +67,15 @@ struct Status {
     duration_ms: AtomicU64,
     out_rate: AtomicU32,
     volume: AtomicU32,
+    exclusive: AtomicBool,
+    dop: AtomicBool,
+    lock_volume: AtomicBool,
     snap: Mutex<Snap>,
     error: Mutex<Option<String>>,
     warning: Mutex<Option<String>>,
+    format_notice: Mutex<Option<String>>,
+    output_label: Mutex<String>,
+    device_fault: Mutex<Option<String>>,
     buf: Mutex<VecDeque<f32>>,
 }
 
@@ -89,6 +103,8 @@ struct Player {
     preload_for: Option<i64>,
     pending: Option<PendingSwitch>,
     skips_left: u8,
+    output: OutputSession,
+    prefs: OutputPrefs,
 }
 
 impl AudioHandle {
@@ -110,7 +126,12 @@ impl AudioHandle {
         self.volume(settings.volume)?;
         self.shuffle(settings.shuffle)?;
         self.repeat(settings.repeat_mode)?;
-        Ok(())
+        self.send(Cmd::Output(OutputPrefs {
+            device_id: settings.output_device_id.clone(),
+            exclusive: settings.output_mode == crate::models::OutputMode::Exclusive,
+            dop: settings.dop,
+            lock_volume: settings.exclusive_volume_lock,
+        }))
     }
 
     pub fn set_queue(&self, tracks: Vec<Track>, index: usize) -> Result<(), String> {
@@ -202,6 +223,9 @@ impl Status {
             duration_ms: AtomicU64::new(0),
             out_rate: AtomicU32::new(48_000),
             volume: AtomicU32::new(0.85f32.to_bits()),
+            exclusive: AtomicBool::new(false),
+            dop: AtomicBool::new(false),
+            lock_volume: AtomicBool::new(false),
             snap: Mutex::new(Snap {
                 queue: Vec::new(),
                 index: None,
@@ -211,8 +235,15 @@ impl Status {
             }),
             error: Mutex::new(None),
             warning: Mutex::new(None),
+            format_notice: Mutex::new(None),
+            output_label: Mutex::new(String::new()),
+            device_fault: Mutex::new(None),
             buf: Mutex::new(VecDeque::new()),
         }
+    }
+
+    fn take_fault(&self) -> Option<String> {
+        self.device_fault.lock().take()
     }
 
     fn snapshot(&self) -> PlaybackState {
@@ -231,8 +262,34 @@ impl Status {
             current,
             queue: snap.queue.clone(),
             error: self.error.lock().clone(),
-            warning: self.warning.lock().clone(),
+            warning: joined_notice(self),
+            output_label: self.output_label.lock().clone(),
         }
+    }
+}
+
+fn joined_notice(status: &Status) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(warning) = status.warning.lock().clone() {
+        parts.push(warning);
+    }
+    if let Some(notice) = status.format_notice.lock().clone() {
+        parts.push(notice);
+    }
+    if status.exclusive.load(Ordering::Relaxed) && !status.lock_volume.load(Ordering::Relaxed) {
+        let volume = f32::from_bits(status.volume.load(Ordering::Relaxed));
+        if volume < 0.999 {
+            let mut text = "独占模式的音量是数字音量，低于 100% 时不是位完美".to_string();
+            if status.dop.load(Ordering::Relaxed) {
+                text.push_str("，DoP 标记也会被改变");
+            }
+            parts.push(text);
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("。"))
     }
 }
 
@@ -251,16 +308,7 @@ fn position_ms(status: &Status) -> u64 {
 }
 
 fn audio_thread(rx: Receiver<Envelope>, status: Arc<Status>, ffmpeg: Option<PathBuf>) {
-    let stream = start_output(Arc::clone(&status));
-    if stream.is_none() {
-        *status.warning.lock() =
-            Some("未检测到音频输出设备，播放进度仍会走动，但没有声音。".into());
-        status.out_rate.store(48_000, Ordering::Relaxed);
-        let clock = Arc::clone(&status);
-        let _ = thread::Builder::new()
-            .name("chengyin-clock".into())
-            .spawn(move || null_clock(clock));
-    }
+    let output = OutputSession::start(Arc::clone(&status));
     let out_rate = status.out_rate.load(Ordering::Relaxed).max(1);
     let resampler = StereoResampler::new(out_rate, out_rate).unwrap_or_else(|_| {
         StereoResampler::new(48_000, 48_000).expect("passthrough resampler")
@@ -275,8 +323,9 @@ fn audio_thread(rx: Receiver<Envelope>, status: Arc<Status>, ffmpeg: Option<Path
         preload_for: None,
         pending: None,
         skips_left: SKIP_BUDGET,
+        output,
+        prefs: OutputPrefs::default(),
     };
-    let _keep_stream = stream;
     loop {
         loop {
             match rx.try_recv() {
@@ -287,6 +336,9 @@ fn audio_thread(rx: Receiver<Envelope>, status: Arc<Status>, ffmpeg: Option<Path
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return,
             }
+        }
+        if let Some(message) = player.status.take_fault() {
+            player.on_device_fault(message);
         }
         player.apply_pending();
         if player.buffer_full() {
@@ -362,6 +414,7 @@ impl Player {
             }
             Cmd::Remove(index) => self.remove_at(index),
             Cmd::Clear => self.clear_queue(),
+            Cmd::Output(prefs) => self.configure_output(prefs),
             Cmd::UpdateArt { album, artist, art_path } => {
                 let mut snap = self.status.snap.lock();
                 for track in &mut snap.queue {
@@ -568,31 +621,106 @@ impl Player {
             self.stop_decoder();
             return;
         };
-        match open_source(&track, self.ffmpeg.as_deref(), offset_ms) {
-            Ok(source) => {
-                self.skips_left = SKIP_BUDGET;
-                self.clear_error();
-                self.install(source, index, gapless, offset_ms, track.duration_ms);
-            }
-            Err(err) => {
-                self.set_error(format!("无法播放「{}」：{err}", track.title));
-                self.skips_left = self.skips_left.saturating_sub(1);
-                self.decoder = None;
-                self.preloaded = None;
-                self.preload_for = None;
-                let follow = {
-                    let mut snap = self.status.snap.lock();
-                    snap.index = Some(index);
-                    next_queue_index(&snap, false)
-                };
-                if let Some(follow) = follow {
-                    if follow != index {
-                        self.open_index(follow, false, 0);
+        let spec = negotiate::source_from_track(&track, self.prefs.exclusive, self.prefs.dop);
+        if gapless && !self.output.satisfies(&spec, &self.prefs) {
+            self.open_index(index, false, offset_ms);
+            return;
+        }
+        let mut opened = self.output.realign(&spec, &self.prefs);
+        let source = if opened.dop {
+            match dop::open_dop(&track) {
+                Ok(source) => source,
+                Err(err) => {
+                    let mut pcm = spec.clone();
+                    pcm.want_dop = false;
+                    opened = self.output.realign(&pcm, &self.prefs);
+                    *self.status.format_notice.lock() =
+                        Some(format!("无法按 DoP 读取：{err}。已改为 PCM"));
+                    match open_source(&track, self.ffmpeg.as_deref(), offset_ms) {
+                        Ok(source) => source,
+                        Err(err) => {
+                            self.fail_open(&track, index, err);
+                            return;
+                        }
                     }
-                } else {
-                    self.status.playing.store(false, Ordering::Relaxed);
                 }
             }
+        } else {
+            match open_source(&track, self.ffmpeg.as_deref(), offset_ms) {
+                Ok(source) => source,
+                Err(err) => {
+                    self.fail_open(&track, index, err);
+                    return;
+                }
+            }
+        };
+        self.skips_left = SKIP_BUDGET;
+        self.clear_error();
+        self.adopt_output(&opened);
+        self.install(source, index, gapless, offset_ms, track.duration_ms);
+    }
+
+    fn fail_open(&mut self, track: &Track, index: usize, err: String) {
+        self.set_error(format!("无法播放「{}」：{err}", track.title));
+        self.skips_left = self.skips_left.saturating_sub(1);
+        self.decoder = None;
+        self.preloaded = None;
+        self.preload_for = None;
+        let follow = {
+            let mut snap = self.status.snap.lock();
+            snap.index = Some(index);
+            next_queue_index(&snap, false)
+        };
+        if let Some(follow) = follow {
+            if follow != index {
+                self.open_index(follow, false, 0);
+            }
+        } else {
+            self.status.playing.store(false, Ordering::Relaxed);
+        }
+    }
+
+    fn configure_output(&mut self, prefs: OutputPrefs) {
+        let changed = self.prefs.device_id != prefs.device_id
+            || self.prefs.exclusive != prefs.exclusive
+            || self.prefs.dop != prefs.dop;
+        self.prefs = prefs.clone();
+        self.status
+            .lock_volume
+            .store(prefs.lock_volume, Ordering::Relaxed);
+        if !changed {
+            return;
+        }
+        self.output.clear_block();
+        self.preloaded = None;
+        self.preload_for = None;
+        let index = self.status.snap.lock().index;
+        if let Some(index) = index {
+            if self.decoder.is_some() {
+                let position = position_ms(&self.status);
+                self.open_index(index, false, position);
+            }
+        }
+    }
+
+    fn on_device_fault(&mut self, message: String) {
+        let _opened = self.output.force_shared(message);
+        self.preloaded = None;
+        self.preload_for = None;
+        let index = self.status.snap.lock().index;
+        if let Some(index) = index {
+            let position = position_ms(&self.status);
+            self.open_index(index, false, position);
+        }
+    }
+
+    fn adopt_output(&mut self, opened: &Opened) {
+        if opened.rate == self.resampler.output_rate() {
+            return;
+        }
+        match self.resampler.set_output_rate(opened.rate) {
+            Ok(flushed) => self.append(&flushed),
+            Err(err) => self.set_error(err),
         }
     }
 
@@ -661,6 +789,15 @@ impl Player {
                 self.open_index(index, false, 0);
             }
             EofAction::Advance(index) => {
+                let track = self.status.snap.lock().queue.get(index).cloned();
+                if let Some(track) = track.as_ref() {
+                    let spec = negotiate::source_from_track(&track, self.prefs.exclusive, self.prefs.dop);
+                    let dop_track = spec.want_dop;
+                    if dop_track || !self.output.satisfies(&spec, &self.prefs) {
+                        self.open_index(index, false, 0);
+                        return;
+                    }
+                }
                 let wanted = self.status.snap.lock().queue.get(index).map(|track| track.id);
                 if let (Some(wanted), Some((id, source))) = (wanted, self.preloaded.take()) {
                     if id == wanted {
@@ -730,6 +867,10 @@ impl Player {
             return;
         };
         if self.preload_for == Some(track.id) {
+            return;
+        }
+        let spec = negotiate::source_from_track(&track, self.prefs.exclusive, self.prefs.dop);
+        if spec.want_dop || !self.output.satisfies(&spec, &self.prefs) {
             return;
         }
         let remain = self
@@ -867,43 +1008,6 @@ fn rebuild_order(len: usize, shuffle: bool, current: Option<usize>) -> Vec<usize
     order
 }
 
-fn start_output(status: Arc<Status>) -> Option<cpal::Stream> {
-    let host = cpal::default_host();
-    let device = host.default_output_device()?;
-    let supported = device.default_output_config().ok()?;
-    let format = supported.sample_format();
-    let config = supported.config();
-    status
-        .out_rate
-        .store(config.sample_rate.max(1), Ordering::Relaxed);
-    let channels = config.channels as usize;
-    let err_status = Arc::clone(&status);
-    let on_error = move |err: cpal::Error| {
-        *err_status.error.lock() = Some(format!("音频输出中断：{err}"));
-    };
-    let stream = match format {
-        cpal::SampleFormat::F32 => device
-            .build_output_stream(
-                config,
-                f32_callback(Arc::clone(&status), channels),
-                on_error,
-                None,
-            )
-            .ok()?,
-        cpal::SampleFormat::I16 => device
-            .build_output_stream(
-                config,
-                i16_callback(Arc::clone(&status), channels),
-                on_error,
-                None,
-            )
-            .ok()?,
-        _ => return None,
-    };
-    stream.play().ok()?;
-    Some(stream)
-}
-
 fn f32_callback(
     status: Arc<Status>,
     channels: usize,
@@ -935,8 +1039,15 @@ fn i16_callback(
 }
 
 fn pull_stereo(status: &Status, smoothed: &mut f32, frames: usize) -> Vec<(f32, f32)> {
-    let target = f32::from_bits(status.volume.load(Ordering::Relaxed)).clamp(0.0, 1.0);
-    *smoothed += (target - *smoothed) * 0.2;
+    let exclusive = status.exclusive.load(Ordering::Relaxed);
+    let locked = exclusive && status.lock_volume.load(Ordering::Relaxed);
+    let volume = f32::from_bits(status.volume.load(Ordering::Relaxed)).clamp(0.0, 1.0);
+    let target = if locked { 1.0 } else { volume };
+    if exclusive && (locked || (target - 1.0).abs() < 0.001) {
+        *smoothed = 1.0;
+    } else {
+        *smoothed += (target - *smoothed) * 0.2;
+    }
     if frames == 0 || !status.playing.load(Ordering::Relaxed) {
         return Vec::new();
     }
@@ -1045,9 +1156,9 @@ mod playback_tests {
     }
 }
 
-fn null_clock(status: Arc<Status>) {
+fn null_clock(status: Arc<Status>, stop: Arc<AtomicBool>) {
     let mut last = Instant::now();
-    loop {
+    while !stop.load(Ordering::Relaxed) {
         let elapsed = last.elapsed();
         last = Instant::now();
         let rate = status.out_rate.load(Ordering::Relaxed).max(1) as f64;

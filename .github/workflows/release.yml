@@ -58,4 +58,4 @@ jobs:
             src-tauri/target/release/bundle/msi/*.msi
           body: |
             澄音 Windows 安装包（未签名，SmartScreen 会提示）。
-            安装器附带 GPL 许可的 FFmpeg，用于 DSF/DFF 与 APE。DSD 会转成 PCM，不是原生 DoP/ASIO。
+            安装器附带 GPL 许可的 FFmpeg，用于 DSF/DFF 与 APE。DSD 默认转为 PCM。独占模式可以打开 DoP（DSD64/DSD128）。不包含 ASIO。

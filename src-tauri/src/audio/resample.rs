@@ -84,15 +84,31 @@ impl StereoResampler {
         }
     }
 
+    pub fn output_rate(&self) -> u32 {
+        self.out_rate
+    }
+
     pub fn set_input_rate(&mut self, rate: u32) -> Result<Vec<f32>, String> {
         let flushed = self.flush();
         self.in_rate = rate.max(1);
+        self.rebuild()?;
+        Ok(flushed)
+    }
+
+    pub fn set_output_rate(&mut self, rate: u32) -> Result<Vec<f32>, String> {
+        let flushed = self.flush();
+        self.out_rate = rate.max(1);
+        self.rebuild()?;
+        Ok(flushed)
+    }
+
+    fn rebuild(&mut self) -> Result<(), String> {
         self.inner = if self.in_rate == self.out_rate {
             None
         } else {
             Some(make(self.in_rate, self.out_rate)?)
         };
-        Ok(flushed)
+        Ok(())
     }
 
     fn drain_chunks(&mut self) -> Vec<f32> {

@@ -102,6 +102,21 @@ impl RepeatMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum OutputMode {
+    #[default]
+    Shared,
+    Exclusive,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputDevice {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -114,6 +129,14 @@ pub struct Settings {
     pub auto_online_cover: bool,
     #[serde(default)]
     pub save_lrc_beside_file: bool,
+    #[serde(default)]
+    pub output_device_id: String,
+    #[serde(default)]
+    pub output_mode: OutputMode,
+    #[serde(default)]
+    pub exclusive_volume_lock: bool,
+    #[serde(default)]
+    pub dop: bool,
 }
 
 fn default_on() -> bool {
@@ -129,6 +152,10 @@ impl Default for Settings {
             auto_online_lyrics: true,
             auto_online_cover: true,
             save_lrc_beside_file: false,
+            output_device_id: String::new(),
+            output_mode: OutputMode::Shared,
+            exclusive_volume_lock: false,
+            dop: false,
         }
     }
 }
@@ -147,6 +174,8 @@ pub struct PlaybackState {
     pub queue: Vec<Track>,
     pub error: Option<String>,
     pub warning: Option<String>,
+    #[serde(default)]
+    pub output_label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

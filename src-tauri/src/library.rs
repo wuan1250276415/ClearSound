@@ -782,6 +782,22 @@ pub fn load_settings(conn: &Connection) -> Result<Settings, String> {
     if let Some(value) = setting(conn, "save_lrc")? {
         settings.save_lrc_beside_file = value == "1";
     }
+    if let Some(value) = setting(conn, "output_device")? {
+        settings.output_device_id = value;
+    }
+    if let Some(value) = setting(conn, "output_mode")? {
+        settings.output_mode = if value == "exclusive" {
+            crate::models::OutputMode::Exclusive
+        } else {
+            crate::models::OutputMode::Shared
+        };
+    }
+    if let Some(value) = setting(conn, "volume_lock")? {
+        settings.exclusive_volume_lock = value == "1";
+    }
+    if let Some(value) = setting(conn, "dop")? {
+        settings.dop = value == "1";
+    }
     Ok(settings)
 }
 
@@ -792,6 +808,22 @@ pub fn save_settings(conn: &Connection, settings: &Settings) -> Result<(), Strin
     put_setting(conn, "auto_lyrics", if settings.auto_online_lyrics { "1" } else { "0" })?;
     put_setting(conn, "auto_cover", if settings.auto_online_cover { "1" } else { "0" })?;
     put_setting(conn, "save_lrc", if settings.save_lrc_beside_file { "1" } else { "0" })?;
+    put_setting(conn, "output_device", &settings.output_device_id)?;
+    put_setting(
+        conn,
+        "output_mode",
+        if settings.output_mode == crate::models::OutputMode::Exclusive {
+            "exclusive"
+        } else {
+            "shared"
+        },
+    )?;
+    put_setting(
+        conn,
+        "volume_lock",
+        if settings.exclusive_volume_lock { "1" } else { "0" },
+    )?;
+    put_setting(conn, "dop", if settings.dop { "1" } else { "0" })?;
     Ok(())
 }
 
