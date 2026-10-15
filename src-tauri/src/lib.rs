@@ -3,6 +3,7 @@ mod commands;
 mod cue;
 mod ffmpeg_bin;
 mod library;
+mod lyrics;
 mod metadata;
 mod models;
 mod smtc;
@@ -36,6 +37,7 @@ pub fn run() {
             commands::library_tracks,
             commands::library_search,
             commands::track_art,
+            commands::track_lyrics,
             commands::playlists_list,
             commands::playlist_create,
             commands::playlist_rename,

@@ -1,6 +1,6 @@
 [package]
 name = "chengyin"
-version = "0.1.0"
+version = "0.2.0"
 description = "澄音 — local music player for Windows"
 authors = ["Chengyin"]
 edition = "2024"

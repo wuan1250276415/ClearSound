@@ -18,6 +18,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
+import { LyricsPanel } from "@/components/LyricsPanel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -64,6 +65,7 @@ export default function App() {
   const [view, setView] = useState<View>({ kind: "tracks" });
   const [query, setQuery] = useState("");
   const [queueOpen, setQueueOpen] = useState(false);
+  const [lyricsOpen, setLyricsOpen] = useState(false);
   const [folderOpen, setFolderOpen] = useState(false);
   const [folderPath, setFolderPath] = useState("示例音乐");
   const [playlistOpen, setPlaylistOpen] = useState(false);
@@ -431,6 +433,8 @@ export default function App() {
             </ScrollArea>
           </main>
 
+          {lyricsOpen && <LyricsPanel onClose={() => setLyricsOpen(false)} />}
+
           {queueOpen && (
             <aside className="fixed inset-x-3 top-16 bottom-28 z-30 flex flex-col rounded-xl border border-line bg-panel shadow-2xl lg:static lg:inset-auto lg:z-auto lg:w-80 lg:rounded-none lg:border-y-0 lg:border-r-0 lg:shadow-none">
               <div className="flex items-center justify-between px-4 py-3">
@@ -477,7 +481,9 @@ export default function App() {
           scrub={scrub}
           setScrub={setScrub}
           queueOpen={queueOpen}
+          lyricsOpen={lyricsOpen}
           onToggleQueue={() => setQueueOpen((open) => !open)}
+          onToggleLyrics={() => setLyricsOpen((open) => !open)}
         />
       </div>
 
@@ -607,12 +613,16 @@ function PlayerBar({
   scrub,
   setScrub,
   queueOpen,
+  lyricsOpen,
   onToggleQueue,
+  onToggleLyrics,
 }: {
   scrub: number | null;
   setScrub: (value: number | null) => void;
   queueOpen: boolean;
+  lyricsOpen: boolean;
   onToggleQueue: () => void;
+  onToggleLyrics: () => void;
 }) {
   const snap = useSyncExternalStore(api.subscribe, api.getSnapshot, api.getSnapshot);
   const playback = snap.playback;
@@ -694,7 +704,7 @@ function PlayerBar({
             <span className="w-10 text-xs text-muted tabular-nums">{formatTime(duration)}</span>
           </div>
         </div>
-        <div className="flex items-center gap-2 lg:w-64">
+        <div className="flex items-center gap-2 lg:w-80">
           <Button
             variant="ghost"
             size="icon"
@@ -710,6 +720,14 @@ function PlayerBar({
             value={[playback.volume]}
             onValueChange={(values) => api.setVolume(values[0] ?? 0)}
           />
+          <Button
+            variant={lyricsOpen ? "secondary" : "ghost"}
+            size="sm"
+            aria-pressed={lyricsOpen}
+            onClick={onToggleLyrics}
+          >
+            歌词
+          </Button>
           <Button variant={queueOpen ? "secondary" : "ghost"} size="sm" onClick={onToggleQueue}>
             队列
           </Button>

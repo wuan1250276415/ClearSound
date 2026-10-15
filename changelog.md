@@ -1,10 +1,18 @@
 # 更新记录
 
+## 0.2.0 — 2026-10-15
+
+- 播放条增加「歌词」。面板跟随播放进度高亮当前行，并平滑滚动到中间。
+- 点击一行会跳到对应时间。手动滚动后，自动滚动暂停约 5 秒。
+- 同名 `.lrc` 优先。CUE 曲目先找曲名或分轨歌词，再使用专辑 `.lrc`（时间按曲目起点换算）。
+- 没有旁路文件时读取内嵌歌词：ID3 USLT/SYLT、Vorbis/FLAC `LYRICS` 与 `UNSYNCEDLYRICS`、M4A `©lyr`。
+- LRC 解析一行多时间标签、`[offset:]` 和元数据标签。编码支持 UTF-8、带 BOM 的 UTF-8，以及 GBK/GB18030。
+- 没有时间轴的歌词按静态文本显示。找不到歌词时显示「暂无歌词」。
+
 ## 0.1.0 — 2026-10-15
 
 - 首个可运行版本：简体中文资料库、搜索、队列、播放列表和播放控制。
 - 支持 FLAC、MP3、WAV、M4A、DSF、DFF、APE，以及 CUE 虚拟曲目。
 - 资料库保存在应用数据目录的 SQLite 文件 `library.db`，封面缓存在 `art/`。
-- Windows 打包配置为 NSIS 与 MSI，并在 CI 中下载 FFmpeg sidecar。
-- 尚未发布安装包：当前 Origin 草稿无法执行 GitHub Actions。
+- Windows 打包为 NSIS 与 MSI，并在 CI 中下载 FFmpeg sidecar。v0.1.0 安装包已发布。
 - 专辑列表按专辑数量显示。页面标记为不翻译，避免浏览器把简体中文界面改成英文。

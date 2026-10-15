@@ -7,6 +7,7 @@ import type {
   PlaylistEntry,
   RepeatMode,
   Root,
+  Lyrics,
   ScanProgress,
   ScanReport,
   Track,
@@ -579,6 +580,15 @@ export function clearQueue() {
   void applyPlayback(call("playback_clear"));
 }
 
+export async function loadLyrics(id: number): Promise<Lyrics> {
+  if (!inTauri()) return mockLyrics(id);
+  try {
+    return await call<Lyrics>("track_lyrics", { id });
+  } catch {
+    return { synced: false, source: null, lines: [] };
+  }
+}
+
 export async function loadArt(id: number) {
   if (id in snapshot.art) return snapshot.art[id];
   try {
@@ -712,6 +722,57 @@ function sampleTracks(folder: string): Track[] {
     folder,
     hasArt: true,
   }));
+}
+
+function findMockTrack(id: number): Track | null {
+  return (
+    snapshot.tracks.find((track) => track.id === id) ??
+    snapshot.playback.queue.find((track) => track.id === id) ??
+    (snapshot.playback.current?.id === id ? snapshot.playback.current : null)
+  );
+}
+
+function mockLyrics(id: number): Lyrics {
+  const track = findMockTrack(id);
+  if (track?.title === "启程") {
+    const lines = [
+      [0, "雾还停在甲板"],
+      [4_000, "缆绳松开了"],
+      [8_000, "灯塔只剩一个点"],
+      [12_000, "潮水把航线推开"],
+      [16_000, "城市的灯往后退"],
+      [20_000, "夜航从此开始"],
+      [28_000, "风从左舷过来"],
+      [36_000, "罗盘轻轻偏了一度"],
+      [44_000, "有人在舱里哼歌"],
+      [52_000, "歌词比海更慢"],
+      [64_000, "靠岸还很远"],
+      [76_000, "先把这一句唱完"],
+      [88_000, "星光铺在水上"],
+      [104_000, "船尾留下一道白"],
+      [120_000, "启程，就是不再回头"],
+      [140_000, "下一站还没有名字"],
+      [164_000, "雾终于散了"],
+    ];
+    return {
+      synced: true,
+      source: "file",
+      lines: lines.map(([timeMs, text]) => ({ timeMs: Number(timeMs), text: String(text) })),
+    };
+  }
+  if (track?.title === "潮汐") {
+    return {
+      synced: false,
+      source: "embedded",
+      lines: [
+        { timeMs: null, text: "海岸线慢慢后退" },
+        { timeMs: null, text: "盐粒留在袖口" },
+        { timeMs: null, text: "潮汐不问归期" },
+        { timeMs: null, text: "我们只是站在原地" },
+      ],
+    };
+  }
+  return { synced: false, source: null, lines: [] };
 }
 
 function placeholderArt(id: number): string | null {

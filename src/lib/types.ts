@@ -94,3 +94,16 @@ export interface ScanReport {
   skipped: number;
   errors: string[];
 }
+
+export type LyricsSource = "file" | "embedded";
+
+export interface LyricLine {
+  timeMs?: number | null;
+  text: string;
+}
+
+export interface Lyrics {
+  synced: boolean;
+  source?: LyricsSource | null;
+  lines: LyricLine[];
+}

@@ -1,5 +1,6 @@
 use crate::audio::AudioHandle;
 use crate::library;
+use crate::lyrics;
 use crate::models::{
     Album, Artist, Folder, PlaybackState, Playlist, PlaylistEntry, RepeatMode, Root, ScanReport,
     Settings, Track,
@@ -105,6 +106,20 @@ pub fn library_search(state: State<'_, AppState>, query: String) -> Result<Vec<T
 pub fn track_art(state: State<'_, AppState>, id: i64) -> Result<Option<String>, String> {
     let conn = state.conn.lock();
     library::track_art_data_url(&conn, &state.art_dir, id)
+}
+
+#[tauri::command]
+pub fn track_lyrics(state: State<'_, AppState>, id: i64) -> Result<lyrics::Lyrics, String> {
+    let track = {
+        let conn = state.conn.lock();
+        library::tracks_by_ids(&conn, &state.art_dir, &[id])?
+            .into_iter()
+            .next()
+    };
+    let Some(track) = track else {
+        return Err("找不到这首曲目".into());
+    };
+    Ok(lyrics::load(&track))
 }
 
 #[tauri::command]

@@ -2,12 +2,14 @@
 
 | 路径 | 作用 |
 | --- | --- |
-| `src/App.tsx` | 简体中文界面：资料库、搜索、队列、播放列表和播放条 |
-| `src/lib/api.ts` | Tauri 命令封装；浏览器里使用内存示例资料库 |
+| `src/App.tsx` | 简体中文界面：资料库、搜索、队列、歌词和播放条 |
+| `src/components/LyricsPanel.tsx` | 歌词面板：高亮当前行、平滑滚动、点击跳转 |
+| `src/lib/api.ts` | Tauri 命令封装；浏览器里使用内存示例资料库和示例歌词 |
 | `src/lib/types.ts` | 与 Rust 模型对应的前端类型 |
 | `src/components/ui/` | 按钮、输入、对话框、菜单、滑块等基础组件 |
 | `src-tauri/src/lib.rs` | 应用启动、命令注册、系统媒体控件 |
-| `src-tauri/src/commands.rs` | 资料库、播放列表和播放命令 |
+| `src-tauri/src/commands.rs` | 资料库、播放列表、歌词和播放命令 |
+| `src-tauri/src/lyrics.rs` | 旁路 `.lrc`、内嵌歌词和 LRC / SYLT 解析 |
 | `src-tauri/src/library.rs` | SQLite 资料库、递归扫描、封面文件 |
 | `src-tauri/src/cue.rs` | CUE 解析与编码识别 |
 | `src-tauri/src/metadata.rs` | 标签、封面、DSF/DFF 头 |
