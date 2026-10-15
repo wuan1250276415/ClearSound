@@ -9,7 +9,7 @@
         "installMode": "currentUser"
       },
       "wix": {
-        "language": "zh-CN",
+        "language": "en-US",
         "upgradeCode": "12aea7db-41d0-5a97-a973-7872b70a3b96"
       },
       "webviewInstallMode": {

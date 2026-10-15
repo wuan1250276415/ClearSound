@@ -8,12 +8,15 @@ use std::time::Duration;
 pub fn start(engine: AudioHandle, hwnd: Option<*mut std::ffi::c_void>) {
     #[cfg(windows)]
     {
-        if hwnd.is_none() {
+        let Some(hwnd) = hwnd else {
             return;
-        }
+        };
+        // Raw pointers are not Send. The handle is only an address the media
+        // thread stores; the window stays owned by the UI thread.
+        let hwnd_addr = hwnd as usize;
         let _ = std::thread::Builder::new()
             .name("chengyin-smtc".into())
-            .spawn(move || windows_loop(engine, hwnd));
+            .spawn(move || windows_loop(engine, Some(hwnd_addr as *mut std::ffi::c_void)));
     }
     #[cfg(not(windows))]
     {
