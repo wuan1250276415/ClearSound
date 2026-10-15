@@ -351,7 +351,10 @@ export default function App() {
                 {snap.ready && snap.roots.length > 0 && searching && listed.length === 0 && (
                   <p className="py-16 text-center text-muted">没有符合「{query.trim()}」的曲目</p>
                 )}
-                {snap.ready && (snap.roots.length > 0 || searching) && listed.length > 0 && view.kind === "albums" && !searching && (
+                {snap.ready && snap.roots.length > 0 && view.kind === "albums" && !searching && snap.albums.length === 0 && (
+                  <p className="py-16 text-center text-muted">还没有专辑</p>
+                )}
+                {snap.ready && snap.roots.length > 0 && view.kind === "albums" && !searching && snap.albums.length > 0 && (
                   <AlbumGrid
                     albums={snap.albums}
                     onOpen={(name, artist) => setView({ kind: "album", name, artist })}
