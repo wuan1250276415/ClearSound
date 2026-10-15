@@ -2,14 +2,16 @@ import type {
   Album,
   Artist,
   Folder,
+  LyricHit,
+  Lyrics,
   PlaybackState,
   Playlist,
   PlaylistEntry,
   RepeatMode,
   Root,
-  Lyrics,
   ScanProgress,
   ScanReport,
+  Settings,
   Track,
 } from "@/lib/types";
 
@@ -48,6 +50,7 @@ export interface Snapshot {
   search: Track[] | null;
   playback: PlaybackState;
   art: Record<number, string | null>;
+  settings: Settings;
 }
 
 let snapshot: Snapshot = {
@@ -67,6 +70,14 @@ let snapshot: Snapshot = {
   search: null,
   playback: emptyPlayback(),
   art: {},
+  settings: {
+    volume: 0.85,
+    shuffle: false,
+    repeatMode: "off",
+    autoOnlineLyrics: true,
+    autoOnlineCover: true,
+    saveLrcBesideFile: false,
+  },
 };
 
 const listeners = new Set<() => void>();
@@ -111,6 +122,7 @@ export async function init() {
     try {
       await reloadLibrary();
       snapshot.playback = await call<PlaybackState>("playback_state");
+      snapshot.settings = await call<Settings>("settings_get");
       snapshot.ready = true;
       emit();
     } catch (err) {
@@ -580,6 +592,107 @@ export function clearQueue() {
   void applyPlayback(call("playback_clear"));
 }
 
+export async function setSettings(partial: Partial<Settings>) {
+  const next = { ...snapshot.settings, ...partial };
+  if (!inTauri()) {
+    snapshot.settings = next;
+    if (partial.autoOnlineCover) coverTried.clear();
+    emit();
+    return next;
+  }
+  try {
+    snapshot.settings = await call<Settings>("settings_set", { settings: next });
+    if (partial.autoOnlineCover) coverTried.clear();
+    emit();
+    return snapshot.settings;
+  } catch (err) {
+    snapshot.error = fail(err);
+    emit();
+    return snapshot.settings;
+  }
+}
+
+export async function matchLyrics(id: number): Promise<Lyrics> {
+  if (!snapshot.settings.autoOnlineLyrics) return { synced: false, source: null, lines: [] };
+  if (!inTauri()) return mockOnlineLyrics(id);
+  try {
+    return await call<Lyrics>("lyrics_match", { id });
+  } catch {
+    return { synced: false, source: null, lines: [] };
+  }
+}
+
+export async function searchLyrics(id: number): Promise<LyricHit[]> {
+  if (!inTauri()) return mockLyricHits(id);
+  return call<LyricHit[]>("lyrics_search", { id });
+}
+
+export async function chooseLyrics(id: number, key: string): Promise<Lyrics> {
+  if (!inTauri()) return mockChooseLyrics(id, key);
+  return call<Lyrics>("lyrics_choose", { id, key });
+}
+
+export async function ensureCover(id: number): Promise<string | null> {
+  const track = findMockTrack(id);
+  const key = coverKey(track);
+  const existing = coverJobs.get(key);
+  if (existing) return existing;
+  const job = ensureCoverJob(id, key);
+  coverJobs.set(key, job);
+  try {
+    return await job;
+  } finally {
+    coverJobs.delete(key);
+  }
+}
+
+const coverJobs = new Map<string, Promise<string | null>>();
+const coverTried = new Set<string>();
+
+async function ensureCoverJob(id: number, key: string): Promise<string | null> {
+  if (coverTried.has(key)) return snapshot.art[id] ?? null;
+  coverTried.add(key);
+  try {
+    const url = inTauri() ? await call<string | null>("cover_ensure", { id }) : mockOnlineCover(id);
+    applyCover(id, url);
+    return url;
+  } catch {
+    applyCover(id, null);
+    return null;
+  }
+}
+
+function applyCover(id: number, url: string | null) {
+  const track = findMockTrack(id);
+  const art = { ...snapshot.art, [id]: url };
+  if (track && url) {
+    for (const item of snapshot.tracks) {
+      if (sameRelease(item, track) && !item.hasArt) {
+        art[item.id] = url;
+        item.hasArt = true;
+      }
+    }
+    for (const item of snapshot.playback.queue) {
+      if (sameRelease(item, track) && !item.hasArt) {
+        art[item.id] = url;
+        item.hasArt = true;
+      }
+    }
+  }
+  snapshot.art = art;
+  snapshot.tracks = [...snapshot.tracks];
+  emit();
+}
+
+function sameRelease(item: Track, track: Track): boolean {
+  return item.album === track.album && (item.artist === track.artist || item.albumArtist === track.albumArtist);
+}
+
+function coverKey(track: Track | null): string {
+  if (!track) return "missing";
+  return `${track.album}\u0000${track.albumArtist || track.artist}`;
+}
+
 export async function loadLyrics(id: number): Promise<Lyrics> {
   if (!inTauri()) return mockLyrics(id);
   try {
@@ -720,7 +833,7 @@ function sampleTracks(folder: string): Track[] {
     channels: 2,
     format,
     folder,
-    hasArt: true,
+    hasArt: title !== "灯塔" && title !== "试音",
   }));
 }
 
@@ -775,8 +888,87 @@ function mockLyrics(id: number): Lyrics {
   return { synced: false, source: null, lines: [] };
 }
 
+function mockOnlineLyrics(id: number): Lyrics {
+  const track = findMockTrack(id);
+  if (track?.title === "靠岸") {
+    return {
+      synced: true,
+      source: "online",
+      provider: "LRCLIB",
+      lines: [
+        { timeMs: 0, text: "船靠近了" },
+        { timeMs: 8_000, text: "灯一盏一盏亮" },
+        { timeMs: 16_000, text: "缆绳扔上码头" },
+        { timeMs: 28_000, text: "夜航在这里歇一会儿" },
+        { timeMs: 40_000, text: "靠岸，不是结束" },
+      ],
+    };
+  }
+  return { synced: false, source: null, lines: [] };
+}
+
+function mockLyricHits(id: number): LyricHit[] {
+  const track = findMockTrack(id);
+  const title = track?.title ?? "曲目";
+  const artist = track?.artist ?? "";
+  const album = track?.album ?? "";
+  return [
+    {
+      key: `lrclib:${id}`,
+      title,
+      artist,
+      album,
+      durationMs: track?.durationMs ?? 0,
+      synced: true,
+      provider: "LRCLIB",
+    },
+    {
+      key: `netease:${id}`,
+      title,
+      artist,
+      album,
+      durationMs: track?.durationMs ?? 0,
+      synced: false,
+      provider: "网易云音乐",
+    },
+  ];
+}
+
+function mockChooseLyrics(id: number, key: string): Lyrics {
+  const track = findMockTrack(id);
+  if (key.startsWith("netease")) {
+    return {
+      synced: false,
+      source: "online",
+      provider: "网易云音乐",
+      lines: [
+        { timeMs: null, text: `${track?.title ?? ""}的网上歌词` },
+        { timeMs: null, text: "没有时间轴" },
+      ],
+    };
+  }
+  return {
+    synced: true,
+    source: "online",
+    provider: "LRCLIB",
+    lines: [
+      { timeMs: 0, text: `${track?.title ?? ""} · 在线` },
+      { timeMs: 6_000, text: "这一句来自搜索结果" },
+    ],
+  };
+}
+
+function mockOnlineCover(id: number): string | null {
+  const track = findMockTrack(id);
+  if (!track || track.hasArt) return placeholderArt(id);
+  const label = (track.album || track.title || "封").slice(0, 1);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320"><rect width="320" height="320" fill="#1c3b2e"/><text x="160" y="170" text-anchor="middle" font-size="72" fill="#8fd0b3" font-family="serif">${label}</text><text x="160" y="230" text-anchor="middle" font-size="28" fill="#e0b15a">online-cover</text></svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
 function placeholderArt(id: number): string | null {
   const track = snapshot.tracks.find((item) => item.id === id) ?? snapshot.playback.current;
+  if (track && track.hasArt === false) return null;
   const label = (track?.album || track?.title || "澄").slice(0, 1);
   const hue = [...(track?.album ?? "澄")].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 360;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320"><rect width="320" height="320" fill="hsl(${hue} 22% 14%)"/><text x="160" y="188" text-anchor="middle" font-size="150" fill="hsl(${hue} 42% 74%)" font-family="Noto Sans CJK SC, serif">${label}</text></svg>`;

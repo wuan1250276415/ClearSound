@@ -48,6 +48,7 @@ enum Cmd {
     Jump(usize),
     Remove(usize),
     Clear,
+    UpdateArt { album: String, artist: String, art_path: String },
 }
 
 struct Status {
@@ -170,6 +171,14 @@ impl AudioHandle {
 
     pub fn clear(&self) -> Result<(), String> {
         self.send(Cmd::Clear)
+    }
+
+    pub fn update_art(&self, album: &str, artist: &str, art_path: &str) -> Result<(), String> {
+        self.send(Cmd::UpdateArt {
+            album: album.to_string(),
+            artist: artist.to_string(),
+            art_path: art_path.to_string(),
+        })
     }
 
     fn send(&self, cmd: Cmd) -> Result<(), String> {
@@ -353,6 +362,17 @@ impl Player {
             }
             Cmd::Remove(index) => self.remove_at(index),
             Cmd::Clear => self.clear_queue(),
+            Cmd::UpdateArt { album, artist, art_path } => {
+                let mut snap = self.status.snap.lock();
+                for track in &mut snap.queue {
+                    let same_album = track.album == album;
+                    let same_artist = track.artist == artist || track.album_artist == artist;
+                    if same_album && same_artist && !track.has_art {
+                        track.has_art = true;
+                        track.art_path = Some(art_path.clone());
+                    }
+                }
+            }
         }
     }
 

@@ -773,6 +773,15 @@ pub fn load_settings(conn: &Connection) -> Result<Settings, String> {
     if let Some(value) = setting(conn, "repeat")? {
         settings.repeat_mode = RepeatMode::from_str(&value);
     }
+    if let Some(value) = setting(conn, "auto_lyrics")? {
+        settings.auto_online_lyrics = value != "0";
+    }
+    if let Some(value) = setting(conn, "auto_cover")? {
+        settings.auto_online_cover = value != "0";
+    }
+    if let Some(value) = setting(conn, "save_lrc")? {
+        settings.save_lrc_beside_file = value == "1";
+    }
     Ok(settings)
 }
 
@@ -780,7 +789,29 @@ pub fn save_settings(conn: &Connection, settings: &Settings) -> Result<(), Strin
     put_setting(conn, "volume", &format!("{:.4}", settings.volume))?;
     put_setting(conn, "shuffle", if settings.shuffle { "1" } else { "0" })?;
     put_setting(conn, "repeat", settings.repeat_mode.as_str())?;
+    put_setting(conn, "auto_lyrics", if settings.auto_online_lyrics { "1" } else { "0" })?;
+    put_setting(conn, "auto_cover", if settings.auto_online_cover { "1" } else { "0" })?;
+    put_setting(conn, "save_lrc", if settings.save_lrc_beside_file { "1" } else { "0" })?;
     Ok(())
+}
+
+pub fn store_downloaded_art(
+    conn: &Connection,
+    art_dir: &Path,
+    album: &str,
+    artist: &str,
+    bytes: &[u8],
+) -> Result<Option<String>, String> {
+    let Some((hash, _)) = store_art(art_dir, "image/jpeg", bytes) else {
+        return Ok(None);
+    };
+    conn.execute(
+        "UPDATE tracks SET art_hash = ?1, art_mime = ?2
+         WHERE album = ?3 AND (artist = ?4 OR album_artist = ?4) AND art_hash IS NULL",
+        params![hash, "image/jpeg", album, artist],
+    )
+    .map_err(sql_err)?;
+    Ok(Some(art_dir.join(&hash).to_string_lossy().into_owned()))
 }
 
 fn setting(conn: &Connection, key: &str) -> Result<Option<String>, String> {

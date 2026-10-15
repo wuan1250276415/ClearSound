@@ -1,8 +1,15 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import * as api from "@/lib/api";
-import type { Lyrics } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import type { LyricHit, Lyrics } from "@/lib/types";
+import { cn, formatTime } from "@/lib/utils";
 
 const PAUSE_MS = 5_000;
 
@@ -12,6 +19,11 @@ export function LyricsPanel({ onClose }: { onClose: () => void }) {
   const positionMs = snap.playback.positionMs;
   const [lyrics, setLyrics] = useState<Lyrics | null>(null);
   const [loading, setLoading] = useState(false);
+  const [statusText, setStatusText] = useState("正在读取歌词");
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [hits, setHits] = useState<LyricHit[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const autoLyrics = snap.settings.autoOnlineLyrics;
   const scrollerRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<Array<HTMLElement | null>>([]);
   const pausedUntil = useRef(0);
@@ -29,16 +41,29 @@ export function LyricsPanel({ onClose }: { onClose: () => void }) {
     }
     let cancelled = false;
     setLoading(true);
-    void api.loadLyrics(id).then((result) => {
+    setStatusText("正在读取歌词");
+    setSearchError(null);
+    setHits(null);
+    void (async () => {
+      const local = await api.loadLyrics(id);
       if (cancelled) return;
-      setLyrics(result);
+      if (!isEmpty(local) || !api.getSnapshot().settings.autoOnlineLyrics) {
+        setLyrics(local);
+        setLoading(false);
+        pausedUntil.current = 0;
+        return;
+      }
+      setStatusText("正在搜索在线歌词");
+      const matched = await api.matchLyrics(id);
+      if (cancelled) return;
+      setLyrics(matched.lines.length > 0 ? matched : local);
       setLoading(false);
       pausedUntil.current = 0;
-    });
+    })();
     return () => {
       cancelled = true;
     };
-  }, [current?.id]);
+  }, [current?.id, autoLyrics]);
 
   let activeIndex = -1;
   if (lyrics?.synced) {
@@ -92,8 +117,39 @@ export function LyricsPanel({ onClose }: { onClose: () => void }) {
     holdAutoScroll();
   }
 
-  const empty = !loading && (!lyrics || lyrics.lines.every((line) => line.text.trim() === ""));
-  const sourceLabel = lyrics?.source === "file" ? "歌词文件" : lyrics?.source === "embedded" ? "内嵌歌词" : null;
+  const empty = !loading && isEmpty(lyrics);
+  const sourceLabel = sourceText(lyrics);
+
+  async function search() {
+    if (!current) return;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const found = await api.searchLyrics(current.id);
+      setHits(found);
+    } catch (err) {
+      setSearchError(err instanceof Error ? err.message : "网络不可用，无法搜索歌词");
+      setHits([]);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  async function pick(hit: LyricHit) {
+    if (!current) return;
+    setHits(null);
+    setLoading(true);
+    setStatusText("正在读取歌词");
+    try {
+      const chosen = await api.chooseLyrics(current.id, hit.key);
+      setLyrics(chosen);
+      pausedUntil.current = 0;
+    } catch (err) {
+      setSearchError(err instanceof Error ? err.message : "无法使用这条歌词");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <aside className="fixed inset-x-3 top-16 bottom-28 z-40 flex min-h-0 flex-col overflow-hidden rounded-xl border border-line bg-panel shadow-2xl lg:static lg:inset-auto lg:z-auto lg:w-[22rem] lg:rounded-none lg:border-y-0 lg:border-r-0 lg:shadow-none">
@@ -105,10 +161,20 @@ export function LyricsPanel({ onClose }: { onClose: () => void }) {
             {sourceLabel ? ` · ${sourceLabel}` : ""}
           </p>
         </div>
-        <Button variant="ghost" size="sm" className="lg:hidden" onClick={onClose}>
-          关闭
-        </Button>
+        <div className="flex shrink-0 gap-1">
+          <Button variant="ghost" size="sm" onClick={() => void search()} disabled={!current || searching}>
+            {searching ? "正在搜索" : empty ? "搜索歌词" : "重新匹配"}
+          </Button>
+          <Button variant="ghost" size="sm" className="lg:hidden" onClick={onClose}>
+            关闭
+          </Button>
+        </div>
       </div>
+      {current && (
+        <div className="px-6 pb-2">
+          <CoverImage trackId={current.id} label={current.album || current.title} className="mx-auto aspect-square w-44 rounded-xl" />
+        </div>
+      )}
       <div
         ref={scrollerRef}
         className="min-h-0 flex-1 overflow-y-auto px-6 [container-type:size]"
@@ -120,7 +186,8 @@ export function LyricsPanel({ onClose }: { onClose: () => void }) {
           if (event.target === scrollerRef.current) holdAutoScroll();
         }}
       >
-        {loading && <p className="py-16 text-center text-sm text-muted">正在读取歌词</p>}
+        {loading && <p className="py-16 text-center text-sm text-muted">{statusText}</p>}
+        {searchError && <p className="px-2 pb-2 text-center text-xs text-brass">{searchError}</p>}
         {!loading && empty && (
           <p className="py-16 text-center text-sm text-muted" data-testid="lyrics-empty">
             暂无歌词
@@ -161,6 +228,71 @@ export function LyricsPanel({ onClose }: { onClose: () => void }) {
           </div>
         )}
       </div>
+      <Dialog open={hits != null} onOpenChange={(open) => !open && setHits(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>搜索歌词</DialogTitle>
+            <DialogDescription>
+              {current ? `为「${current.title}」选择一条歌词。` : "选择一条歌词。"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex max-h-72 flex-col gap-1 overflow-auto">
+            {hits?.length === 0 && <p className="text-sm text-muted">没有匹配的歌词</p>}
+            {hits?.map((hit) => (
+              <button
+                key={hit.key}
+                type="button"
+                className="rounded-md px-3 py-2 text-left hover:bg-panel-2"
+                onClick={() => void pick(hit)}
+              >
+                <span className="block truncate">{hit.title}</span>
+                <span className="block truncate text-xs text-muted">
+                  {hit.artist}
+                  {hit.album ? ` · ${hit.album}` : ""}
+                  {hit.durationMs > 0 ? ` · ${formatTime(hit.durationMs)}` : ""}
+                  {` · ${hit.provider}`}
+                  {hit.synced ? " · 同步" : " · 文本"}
+                </span>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </aside>
+  );
+}
+
+function isEmpty(lyrics: Lyrics | null): boolean {
+  return !lyrics || lyrics.lines.every((line) => line.text.trim() === "");
+}
+
+function sourceText(lyrics: Lyrics | null): string | null {
+  if (!lyrics || isEmpty(lyrics)) return null;
+  if (lyrics.source === "file") return "歌词文件";
+  if (lyrics.source === "embedded") return "内嵌歌词";
+  if (lyrics.source === "online") return lyrics.provider ? `在线 · ${lyrics.provider}` : "在线歌词";
+  return null;
+}
+
+function CoverImage({ trackId, label, className }: { trackId: number; label: string; className?: string }) {
+  const art = useSyncExternalStore(api.subscribe, api.getSnapshot, api.getSnapshot).art;
+  const autoCover = useSyncExternalStore(api.subscribe, api.getSnapshot, api.getSnapshot).settings.autoOnlineCover;
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const url = await api.loadArt(trackId);
+      if (cancelled || url) return;
+      if (api.getSnapshot().settings.autoOnlineCover) await api.ensureCover(trackId);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [trackId, autoCover]);
+  const url = art[trackId];
+  if (url) return <img src={url} alt="" data-testid="now-cover" className={cn("bg-panel-2 object-cover", className)} />;
+  return (
+    <div data-testid="now-cover-fallback" className={cn("grid place-items-center bg-jade-dim font-medium text-jade", className)}>
+      {(label || "澄").slice(0, 1)}
+    </div>
   );
 }

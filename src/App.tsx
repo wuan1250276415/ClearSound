@@ -66,6 +66,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [queueOpen, setQueueOpen] = useState(false);
   const [lyricsOpen, setLyricsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [folderOpen, setFolderOpen] = useState(false);
   const [folderPath, setFolderPath] = useState("示例音乐");
   const [playlistOpen, setPlaylistOpen] = useState(false);
@@ -188,6 +189,9 @@ export default function App() {
               className="pl-9"
             />
           </div>
+          <Button variant="ghost" onClick={() => setSettingsOpen(true)}>
+            设置
+          </Button>
           <Button onClick={() => void chooseFolder()}>
             <FolderPlus className="size-4" />
             添加文件夹
@@ -487,6 +491,32 @@ export default function App() {
         />
       </div>
 
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>设置</DialogTitle>
+            <DialogDescription>在线歌词和封面只在本地没有结果时才会请求。没有网络时继续使用已有资料。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <SettingToggle
+              label="自动获取在线歌词"
+              pressed={snap.settings.autoOnlineLyrics}
+              onClick={() => void api.setSettings({ autoOnlineLyrics: !snap.settings.autoOnlineLyrics })}
+            />
+            <SettingToggle
+              label="自动获取在线封面"
+              pressed={snap.settings.autoOnlineCover}
+              onClick={() => void api.setSettings({ autoOnlineCover: !snap.settings.autoOnlineCover })}
+            />
+            <SettingToggle
+              label="匹配后保存到歌曲旁边的 .lrc"
+              pressed={snap.settings.saveLrcBesideFile}
+              onClick={() => void api.setSettings({ saveLrcBesideFile: !snap.settings.saveLrcBesideFile })}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={folderOpen} onOpenChange={setFolderOpen}>
         <DialogContent>
           <DialogHeader>
@@ -737,6 +767,22 @@ function PlayerBar({
   );
 }
 
+function SettingToggle({ label, pressed, onClick }: { label: string; pressed: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={pressed}
+      aria-label={label}
+      className="flex w-full items-center justify-between rounded-md border border-line px-3 py-2 text-left text-sm hover:bg-panel-2"
+      onClick={onClick}
+    >
+      <span>{label}</span>
+      <span className={pressed ? "text-jade" : "text-muted"}>{pressed ? "开" : "关"}</span>
+    </button>
+  );
+}
+
 function EmptyLibrary({ onAdd }: { onAdd: () => void }) {
   return (
     <div className="flex flex-col items-center px-6 py-20 text-center">
@@ -826,6 +872,7 @@ function TrackTable({
                 active && "bg-jade-dim",
               )}
             >
+              <Cover trackId={track.id} label={track.album || track.title} className="size-10 shrink-0 rounded" />
               <button className="w-8 text-left text-xs text-muted tabular-nums" onClick={() => onPlay(index)} aria-label={`播放 ${track.title}`}>
                 {active && playing ? "▶" : (track.trackNumber ?? index + 1)}
               </button>
@@ -872,12 +919,23 @@ function TrackTable({
 }
 
 function Cover({ trackId, label, className }: { trackId?: number | null; label: string; className?: string }) {
-  const art = useSyncExternalStore(api.subscribe, api.getSnapshot, api.getSnapshot).art;
+  const snap = useSyncExternalStore(api.subscribe, api.getSnapshot, api.getSnapshot);
+  const art = snap.art;
+  const autoCover = snap.settings.autoOnlineCover;
   useEffect(() => {
-    if (trackId != null) void api.loadArt(trackId);
-  }, [trackId]);
+    if (trackId == null) return;
+    let cancelled = false;
+    void (async () => {
+      const url = await api.loadArt(trackId);
+      if (cancelled || url) return;
+      if (api.getSnapshot().settings.autoOnlineCover) await api.ensureCover(trackId);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [trackId, autoCover]);
   const url = trackId != null ? art[trackId] : null;
-  if (url) return <img src={url} alt="" className={cn("bg-panel-2 object-cover", className)} />;
+  if (url) return <img src={url} alt="" data-testid="cover" className={cn("bg-panel-2 object-cover", className)} />;
   return (
     <div className={cn("grid place-items-center bg-jade-dim font-medium text-jade", className)}>
       {(label || "澄").slice(0, 1)}

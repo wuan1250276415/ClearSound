@@ -1,8 +1,11 @@
 mod audio;
 mod commands;
+mod cover_net;
 mod cue;
 mod ffmpeg_bin;
+mod http_client;
 mod library;
+mod lyric_net;
 mod lyrics;
 mod metadata;
 mod models;
@@ -38,6 +41,10 @@ pub fn run() {
             commands::library_search,
             commands::track_art,
             commands::track_lyrics,
+            commands::lyrics_match,
+            commands::lyrics_search,
+            commands::lyrics_choose,
+            commands::cover_ensure,
             commands::playlists_list,
             commands::playlist_create,
             commands::playlist_rename,
@@ -76,6 +83,8 @@ fn setup(app: &mut tauri::App) -> Result<(), String> {
     std::fs::create_dir_all(&dir).map_err(|err| format!("无法创建数据目录：{err}"))?;
     let art_dir = dir.join("art");
     std::fs::create_dir_all(&art_dir).map_err(|err| format!("无法创建封面目录：{err}"))?;
+    let cache_dir = dir.join("cache");
+    std::fs::create_dir_all(&cache_dir).map_err(|err| format!("无法创建缓存目录：{err}"))?;
     let db_path = dir.join("library.db");
     let conn = library::open_db(&db_path)?;
     let settings = library::load_settings(&conn)?;
@@ -90,6 +99,7 @@ fn setup(app: &mut tauri::App) -> Result<(), String> {
     app.manage(AppState {
         db_path,
         art_dir,
+        cache_dir,
         conn: Mutex::new(conn),
         engine,
         scan_lock: Arc::new(Mutex::new(())),

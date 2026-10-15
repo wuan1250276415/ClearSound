@@ -43,7 +43,7 @@ fn windows_loop(engine: AudioHandle, hwnd: Option<*mut std::ffi::c_void>) {
     {
         return;
     }
-    let mut shown_id: Option<i64> = None;
+    let mut shown: Option<(i64, Option<String>)> = None;
     loop {
         let state = engine.snapshot();
         let progress = Some(MediaPosition(Duration::from_millis(state.position_ms)));
@@ -55,9 +55,9 @@ fn windows_loop(engine: AudioHandle, hwnd: Option<*mut std::ffi::c_void>) {
             MediaPlayback::Paused { progress }
         };
         let _ = controls.set_playback(playback);
-        let current_id = state.current.as_ref().map(|track| track.id);
-        if current_id != shown_id {
-            shown_id = current_id;
+        let signature = state.current.as_ref().map(|track| (track.id, track.art_path.clone()));
+        if signature != shown {
+            shown = signature;
             if let Some(track) = state.current.as_ref() {
                 let cover = track.art_path.as_deref().map(file_url);
                 let metadata = MediaMetadata {

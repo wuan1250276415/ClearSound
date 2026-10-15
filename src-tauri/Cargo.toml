@@ -1,6 +1,6 @@
 [package]
 name = "chengyin"
-version = "0.2.0"
+version = "0.3.0"
 description = "澄音 — local music player for Windows"
 authors = ["Chengyin"]
 edition = "2024"
@@ -33,6 +33,8 @@ base64 = "0.23.1"
 tauri-plugin-dialog = "2.8.3"
 rubato = "0.15"
 sha2 = "0.11.1"
+ureq = { version = "2.12.1", default-features = false, features = ["tls", "gzip"] }
+image = { version = "0.25.6", default-features = false, features = ["jpeg", "png"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

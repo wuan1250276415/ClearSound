@@ -108,6 +108,16 @@ pub struct Settings {
     pub volume: f32,
     pub shuffle: bool,
     pub repeat_mode: RepeatMode,
+    #[serde(default = "default_on")]
+    pub auto_online_lyrics: bool,
+    #[serde(default = "default_on")]
+    pub auto_online_cover: bool,
+    #[serde(default)]
+    pub save_lrc_beside_file: bool,
+}
+
+fn default_on() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -116,6 +126,9 @@ impl Default for Settings {
             volume: 0.85,
             shuffle: false,
             repeat_mode: RepeatMode::Off,
+            auto_online_lyrics: true,
+            auto_online_cover: true,
+            save_lrc_beside_file: false,
         }
     }
 }

@@ -1,5 +1,7 @@
 use crate::audio::AudioHandle;
+use crate::cover_net;
 use crate::library;
+use crate::lyric_net;
 use crate::lyrics;
 use crate::models::{
     Album, Artist, Folder, PlaybackState, Playlist, PlaylistEntry, RepeatMode, Root, ScanReport,
@@ -14,6 +16,7 @@ use tauri::{AppHandle, Emitter, State};
 pub struct AppState {
     pub db_path: PathBuf,
     pub art_dir: PathBuf,
+    pub cache_dir: PathBuf,
     pub conn: Mutex<Connection>,
     pub engine: AudioHandle,
     pub scan_lock: Arc<Mutex<()>>,
@@ -120,6 +123,88 @@ pub fn track_lyrics(state: State<'_, AppState>, id: i64) -> Result<lyrics::Lyric
         return Err("找不到这首曲目".into());
     };
     Ok(lyrics::load(&track))
+}
+
+#[tauri::command]
+pub async fn lyrics_match(state: State<'_, AppState>, id: i64) -> Result<lyrics::Lyrics, String> {
+    let (track, save, cache) = {
+        let conn = state.conn.lock();
+        let settings = library::load_settings(&conn)?;
+        if !settings.auto_online_lyrics {
+            return Ok(lyrics::Lyrics::empty_public());
+        }
+        let track = library::track_by_id(&conn, &state.art_dir, id)?.ok_or_else(|| "找不到这首曲目".to_string())?;
+        (track, settings.save_lrc_beside_file, state.cache_dir.clone())
+    };
+    tauri::async_runtime::spawn_blocking(move || lyric_net::auto_match(&track, &cache, save))
+        .await
+        .map_err(|err| format!("歌词匹配中断：{err}"))
+}
+
+#[tauri::command]
+pub async fn lyrics_search(state: State<'_, AppState>, id: i64) -> Result<Vec<lyric_net::LyricHit>, String> {
+    let track = require_track(&state, id)?;
+    let cache = state.cache_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || lyric_net::search(&track, &cache))
+        .await
+        .map_err(|err| format!("歌词搜索中断：{err}"))?
+}
+
+#[tauri::command]
+pub async fn lyrics_choose(state: State<'_, AppState>, id: i64, key: String) -> Result<lyrics::Lyrics, String> {
+    let (track, save, cache) = {
+        let conn = state.conn.lock();
+        let settings = library::load_settings(&conn)?;
+        let track = library::track_by_id(&conn, &state.art_dir, id)?.ok_or_else(|| "找不到这首曲目".to_string())?;
+        (track, settings.save_lrc_beside_file, state.cache_dir.clone())
+    };
+    tauri::async_runtime::spawn_blocking(move || lyric_net::choose(&track, &cache, &key, save))
+        .await
+        .map_err(|err| format!("歌词选择中断：{err}"))?
+}
+
+#[tauri::command]
+pub async fn cover_ensure(state: State<'_, AppState>, id: i64) -> Result<Option<String>, String> {
+    let (track, art_dir, cache) = {
+        let conn = state.conn.lock();
+        let settings = library::load_settings(&conn)?;
+        let track = library::track_by_id(&conn, &state.art_dir, id)?.ok_or_else(|| "找不到这首曲目".to_string())?;
+        if track.has_art || !settings.auto_online_cover {
+            return library::track_art_data_url(&conn, &state.art_dir, id);
+        }
+        (track, state.art_dir.clone(), state.cache_dir.clone())
+    };
+    let album = track.album.clone();
+    let artist = if track.album_artist.trim().is_empty() {
+        track.artist.clone()
+    } else {
+        track.album_artist.clone()
+    };
+    let fetched = tauri::async_runtime::spawn_blocking(move || cover_net::fetch(&track, &cache))
+        .await
+        .map_err(|err| format!("封面任务中断：{err}"))?;
+    let bytes = match fetched {
+        cover_net::CoverFetch::Image(bytes) => bytes,
+        cover_net::CoverFetch::Miss | cover_net::CoverFetch::Offline => return Ok(None),
+    };
+    let stored = {
+        let conn = state.conn.lock();
+        library::store_downloaded_art(&conn, &art_dir, &album, &artist, &bytes)?
+    };
+    if let Some(path) = &stored {
+        let _ = state.engine.update_art(&album, &artist, path);
+    }
+    Ok(Some(jpeg_data_url(&bytes)))
+}
+
+fn require_track(state: &AppState, id: i64) -> Result<crate::models::Track, String> {
+    let conn = state.conn.lock();
+    library::track_by_id(&conn, &state.art_dir, id)?.ok_or_else(|| "找不到这首曲目".to_string())
+}
+
+fn jpeg_data_url(bytes: &[u8]) -> String {
+    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+    format!("data:image/jpeg;base64,{encoded}")
 }
 
 #[tauri::command]

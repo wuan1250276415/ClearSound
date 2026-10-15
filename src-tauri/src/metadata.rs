@@ -58,7 +58,7 @@ pub fn read_tags(path: &Path) -> FileTags {
             if tags.channels.is_none() {
                 tags.channels = Some(dsd.channels);
             }
-            if tags.title.is_none() {
+            if dsd.metadata_offset > 0 {
                 if let Some(id3) = read_id3_at(path, dsd.metadata_offset) {
                     if tags.title.is_none() {
                         tags.title = id3.title;
@@ -71,6 +71,9 @@ pub fn read_tags(path: &Path) -> FileTags {
                     }
                     if tags.track_number.is_none() {
                         tags.track_number = id3.track_number;
+                    }
+                    if tags.art.is_none() {
+                        tags.art = id3.art;
                     }
                 }
             }
@@ -257,6 +260,7 @@ struct Id3Text {
     artist: Option<String>,
     album: Option<String>,
     track_number: Option<u32>,
+    art: Option<(String, Vec<u8>)>,
 }
 
 fn read_id3_at(path: &Path, offset: u64) -> Option<Id3Text> {
@@ -282,6 +286,7 @@ fn read_id3_at(path: &Path, offset: u64) -> Option<Id3Text> {
         artist: None,
         album: None,
         track_number: None,
+        art: None,
     };
     let mut pos = 0;
     while pos + 10 <= data.len() {
@@ -300,7 +305,9 @@ fn read_id3_at(path: &Path, offset: u64) -> Option<Id3Text> {
         }
         let body = &data[frame_start..frame_start + frame_size];
         let key = std::str::from_utf8(id).unwrap_or("");
-        if matches!(key, "TIT2" | "TPE1" | "TALB" | "TRCK") {
+        if key == "APIC" && text.art.is_none() {
+            text.art = parse_apic(body);
+        } else if matches!(key, "TIT2" | "TPE1" | "TALB" | "TRCK") {
             if let Some(value) = decode_id3_text(body) {
                 match key {
                     "TIT2" => text.title = Some(value),
@@ -319,6 +326,63 @@ fn read_id3_at(path: &Path, offset: u64) -> Option<Id3Text> {
         pos = frame_start + frame_size;
     }
     Some(text)
+}
+
+fn parse_apic(body: &[u8]) -> Option<(String, Vec<u8>)> {
+    if body.len() < 8 {
+        return None;
+    }
+    let encoding = body[0];
+    let mime_end = body[1..].iter().position(|byte| *byte == 0)?;
+    let mut mime = String::from_utf8_lossy(&body[1..1 + mime_end]).trim().to_string();
+    let mut pos = 1 + mime_end + 1;
+    if pos >= body.len() {
+        return None;
+    }
+    pos += 1;
+    let desc = terminated_len(&body[pos..], encoding)?;
+    pos += desc;
+    if pos >= body.len() {
+        return None;
+    }
+    let data = body[pos..].to_vec();
+    if data.len() < 16 || data.len() > 20 * 1024 * 1024 {
+        return None;
+    }
+    if mime.is_empty() {
+        mime = sniff_image(&data)?.to_string();
+    } else if !mime.contains('/') {
+        mime = format!("image/{mime}");
+    }
+    Some((mime, data))
+}
+
+fn terminated_len(data: &[u8], encoding: u8) -> Option<usize> {
+    match encoding {
+        1 | 2 => {
+            let mut end = 0;
+            while end + 1 < data.len() {
+                if data[end] == 0 && data[end + 1] == 0 {
+                    return Some(end + 2);
+                }
+                end += 2;
+            }
+            Some(data.len())
+        }
+        _ => data.iter().position(|byte| *byte == 0).map(|end| end + 1).or(Some(data.len())),
+    }
+}
+
+fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(b"GIF8") {
+        Some("image/gif")
+    } else {
+        None
+    }
 }
 
 fn decode_utf16_bom(raw: &[u8]) -> String {
@@ -437,5 +501,18 @@ mod tests {
         assert_eq!(info.channels, 2);
         assert_eq!(info.duration_ms, 1000);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn apic_frame_keeps_jpeg() {
+        let mut body = vec![0];
+        body.extend(b"image/jpeg\0");
+        body.push(3);
+        body.push(0);
+        body.extend(&[0xFF, 0xD8, 0xFF, 0xD9]);
+        body.extend(std::iter::repeat(1).take(20));
+        let (mime, data) = parse_apic(&body).unwrap();
+        assert_eq!(mime, "image/jpeg");
+        assert!(data.starts_with(&[0xFF, 0xD8, 0xFF]));
     }
 }

@@ -21,6 +21,8 @@ const MAX_LYRICS_BYTES: u64 = 1_048_576;
 pub struct Lyrics {
     pub synced: bool,
     pub source: Option<LyricsSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
     pub lines: Vec<LyricLine>,
 }
 
@@ -29,6 +31,7 @@ pub struct Lyrics {
 pub enum LyricsSource {
     File,
     Embedded,
+    Online,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -43,11 +46,12 @@ impl Lyrics {
         Self {
             synced: false,
             source: None,
+            provider: None,
             lines: Vec::new(),
         }
     }
 
-    fn is_usable(&self) -> bool {
+    pub(crate) fn is_usable(&self) -> bool {
         self.lines.iter().any(|line| !line.text.trim().is_empty())
     }
 }
@@ -301,6 +305,7 @@ pub fn parse_lrc(text: &str) -> Lyrics {
         return Lyrics {
             synced: false,
             source: None,
+            provider: None,
             lines: plain,
         };
     }
@@ -314,6 +319,7 @@ pub fn parse_lrc(text: &str) -> Lyrics {
     Lyrics {
         synced: true,
         source: None,
+        provider: None,
         lines: timed,
     }
 }
@@ -474,6 +480,7 @@ fn read_id3_sylt(path: &Path, sample_rate: Option<u32>) -> Option<Lyrics> {
     Some(Lyrics {
         synced: true,
         source: None,
+        provider: None,
         lines,
     })
 }
@@ -657,6 +664,62 @@ fn synchsafe(bytes: &[u8]) -> u32 {
         | ((bytes[1] as u32 & 0x7f) << 14)
         | ((bytes[2] as u32 & 0x7f) << 7)
         | (bytes[3] as u32 & 0x7f)
+}
+
+pub fn lrc_save_path(track: &Track) -> Option<PathBuf> {
+    let audio = Path::new(&track.path);
+    let dir = audio.parent()?;
+    let stem = if track.cue_path.is_some() {
+        sanitize_file_stem(&track.title)
+    } else {
+        let stem = stem_string(audio);
+        if stem.is_empty() {
+            sanitize_file_stem(&track.title)
+        } else {
+            stem
+        }
+    };
+    if stem.is_empty() {
+        return None;
+    }
+    Some(dir.join(format!("{stem}.lrc")))
+}
+
+pub fn sanitize_file_stem(value: &str) -> String {
+    let cleaned: String = value
+        .chars()
+        .filter(|ch| !matches!(ch, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0'))
+        .collect();
+    let cleaned = cleaned.trim().trim_matches('.').trim();
+    cleaned.chars().take(80).collect()
+}
+
+pub fn format_lrc(lyrics: &Lyrics, title: &str, artist: &str, album: &str) -> String {
+    let mut out = String::new();
+    if !title.trim().is_empty() {
+        out.push_str(&format!("[ti:{}]\n", title.trim()));
+    }
+    if !artist.trim().is_empty() {
+        out.push_str(&format!("[ar:{}]\n", artist.trim()));
+    }
+    if !album.trim().is_empty() {
+        out.push_str(&format!("[al:{}]\n", album.trim()));
+    }
+    if lyrics.synced {
+        for line in &lyrics.lines {
+            let Some(ms) = line.time_ms else { continue };
+            let minutes = ms / 60_000;
+            let seconds = (ms % 60_000) / 1_000;
+            let hundredths = (ms % 1_000) / 10;
+            out.push_str(&format!("[{minutes:02}:{seconds:02}.{hundredths:02}]{}\n", line.text));
+        }
+    } else {
+        for line in &lyrics.lines {
+            out.push_str(&line.text);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 #[cfg(test)]

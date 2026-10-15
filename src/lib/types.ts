@@ -79,6 +79,9 @@ export interface Settings {
   volume: number;
   shuffle: boolean;
   repeatMode: RepeatMode;
+  autoOnlineLyrics: boolean;
+  autoOnlineCover: boolean;
+  saveLrcBesideFile: boolean;
 }
 
 export interface ScanProgress {
@@ -95,7 +98,17 @@ export interface ScanReport {
   errors: string[];
 }
 
-export type LyricsSource = "file" | "embedded";
+export type LyricsSource = "file" | "embedded" | "online";
+
+export interface LyricHit {
+  key: string;
+  title: string;
+  artist: string;
+  album: string;
+  durationMs: number;
+  synced: boolean;
+  provider: string;
+}
 
 export interface LyricLine {
   timeMs?: number | null;
@@ -105,5 +118,6 @@ export interface LyricLine {
 export interface Lyrics {
   synced: boolean;
   source?: LyricsSource | null;
+  provider?: string | null;
   lines: LyricLine[];
 }
