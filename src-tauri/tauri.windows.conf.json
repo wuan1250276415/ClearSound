@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": ["nsis", "msi"],
+    "externalBin": ["binaries/ffmpeg"],
+    "windows": {
+      "nsis": {
+        "languages": ["SimpChinese", "English"],
+        "installMode": "currentUser"
+      },
+      "wix": {
+        "language": "zh-CN",
+        "upgradeCode": "12aea7db-41d0-5a97-a973-7872b70a3b96"
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
+    }
+  }
+}

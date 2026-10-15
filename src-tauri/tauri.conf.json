@@ -1,0 +1,45 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Chengyin",
+  "version": "0.1.0",
+  "identifier": "com.chengyin.player",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "澄音",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640,
+        "theme": "Dark",
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1421 http://localhost:1420"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "Chengyin",
+    "copyright": "Copyright © 2026 Chengyin",
+    "category": "Music",
+    "shortDescription": "澄音本地音乐播放器",
+    "longDescription": "播放 FLAC、MP3、WAV、M4A、DSF 与 APE，并按 CUE 把整轨专辑拆成曲目。",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

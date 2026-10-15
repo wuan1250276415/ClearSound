@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", sans-serif;
+  --color-ink: #101410;
+  --color-panel: #171c18;
+  --color-panel-2: #212820;
+  --color-line: #313a31;
+  --color-cream: #f3efe6;
+  --color-muted: #a39b8d;
+  --color-jade: #8fd0b3;
+  --color-jade-dim: #1c3b2e;
+  --color-brass: #e0b15a;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(900px 420px at 0% -10%, #1c3b2e 0%, transparent 60%),
+    var(--color-ink);
+  color: var(--color-cream);
+  font-family: var(--font-sans);
+}
+
+.wordmark {
+  font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", serif;
+}
+
+button,
+input {
+  font-family: inherit;
+}
+
+.track-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 52px;
+}
